@@ -2,3 +2,4 @@ packets.jsonl
 alerts.json
 *.pcap
 __pycache__/
+*.swp
