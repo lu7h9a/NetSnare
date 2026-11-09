@@ -1,0 +1,4 @@
+packets.jsonl
+alerts.json
+*.pcap
+__pycache__/
