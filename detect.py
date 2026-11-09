@@ -59,3 +59,39 @@ class SlowScanDetector:
                 return {"type": "SLOW_PORT_SCAN", "src": src,
                         "ports": len(ports), "window": window, "ts": now}
         return None
+
+class DistributedScanDetector:
+    def __init__(self, min_sources=5, max_ports=30, bucket_secs=60, n_buckets=5):
+        self.min_sources = min_sources
+        self.max_ports = max_ports
+        self.bucket_secs = bucket_secs
+        self.n_buckets = n_buckets
+        self.buckets = defaultdict(dict)    # dst -> {bucket_id: (set of srcs, set of dports)}
+        self.last_alert = {}
+
+    def process(self, pkt):
+        if pkt["proto"] != "TCP" or (pkt["flags"] & 0x12) != 0x02:
+            return None
+
+        now = pkt["ts"]
+        dst = pkt["dst"]
+        bucket_id = int(now // self.bucket_secs)
+        per_dst = self.buckets[dst]
+        srcs, ports = per_dst.setdefault(bucket_id, (set(), set()))
+        srcs.add(pkt["src"])
+        ports.add(pkt["dport"])
+
+        oldest = bucket_id - self.n_buckets + 1
+        for b in [b for b in per_dst if b < oldest]:
+            del per_dst[b]
+
+        all_srcs = set().union(*(s for s, p in per_dst.values()))
+        all_ports = set().union(*(p for s, p in per_dst.values()))
+        window = self.bucket_secs * self.n_buckets
+        if len(all_srcs) >= self.min_sources and len(all_ports) > self.max_ports:
+            if now - self.last_alert.get(dst, 0) > window:
+                self.last_alert[dst] = now
+                return {"type": "DISTRIBUTED_SCAN", "dst": dst,
+                        "sources": len(all_srcs), "ports": len(all_ports),
+                        "window": window, "ts": now}
+        return None
