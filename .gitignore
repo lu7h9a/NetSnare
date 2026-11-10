@@ -1,5 +1,5 @@
-packets.jsonl
 alerts.json
+packets.jsonl
 *.pcap
 __pycache__/
 *.swp
