@@ -2,6 +2,11 @@ import json
 import socket
 import struct
 import time
+import os 
+
+from detect import(ScanDetector, SlowScanDetector, DistributedScanDetector, FloodDetector)
+
+ALERTS_FILE="alerts.json"
 
 FLAG_BITS = [("FIN", 0x01), ("SYN", 0x02), ("RST", 0x04),
              ("PSH", 0x08), ("ACK", 0x10)]
@@ -39,10 +44,27 @@ def parse_packet(data):
     else:
         return None
     return pkt
+def write_state(alerts, stats):
+    tmp = ALERTS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"alerts": alerts[-200:], "stats": stats}, f)
+    os.replace(tmp, ALERTS_FILE)
+def write_state(alerts, stats):
+    tmp = ALERTS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"alerts": alerts[-200:], "stats": stats}, f)
+    os.replace(tmp, ALERTS_FILE)
 
 
 def main():
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+    detectors = [ScanDetector(), SlowScanDetector(),
+                 DistributedScanDetector(), FloodDetector()]
+    alerts = []
+    stats = {"TCP": 0, "UDP": 0}
+    last_write = 0
+    write_state(alerts, stats)
+
     with open("packets.jsonl", "a") as f:
         while True:
             data, addr = s.recvfrom(65535)
@@ -51,8 +73,18 @@ def main():
                 continue
             f.write(json.dumps(pkt) + "\n")
             f.flush()
-            print(pkt["proto"], pkt["src"], "->", pkt["dst"], pkt.get("flag_names", ""))
+            stats[pkt["proto"]] += 1
 
+            changed = False
+            for d in detectors:
+                alert = d.process(pkt)
+                if alert:
+                    alerts.append(alert)
+                    print("ALERT", alert)
+                    changed = True
 
+            if changed or pkt["ts"] - last_write > 2:
+                write_state(alerts, stats)
+                last_write = pkt["ts"]
 if __name__ == "__main__":
     main()
