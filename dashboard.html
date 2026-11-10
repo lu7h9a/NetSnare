@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetWraith</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1f24;
+    --muted: #5b6672; --line: #dde1e6; --alert: #c62828;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --card: #1b2129; --text: #e6e9ed;
+      --muted: #9aa5b1; --line: #2d3641; --alert: #ff6b6b;
+    }
+  }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  #status { color: var(--muted); margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line);
+          border-radius: 8px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line);
+           white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+  tr.alert td:first-child { border-left: 4px solid var(--alert); }
+  .empty { padding: 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>NetWraith</h1>
+<div id="status">connecting...</div>
+<div class="card">
+  <table>
+    <thead><tr><th>Time</th><th>Type</th><th>Source</th><th>Details</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="empty" hidden>No alerts yet.</div>
+</div>
+<script>
+function details(a) {
+  if (a.type === "SYN_FLOOD")
+    return a.half_open + " unanswered SYNs to " + a.dst + ":" + a.dport + " in " + a.window + "s";
+  if (a.type === "DISTRIBUTED_SCAN")
+    return a.sources + " sources, " + a.ports + " ports on " + a.dst + " in " + a.window + "s";
+  return a.ports + " ports in " + a.window + "s";
+}
+
+function cell(tr, text) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  tr.appendChild(td);
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("alerts.json", { cache: "no-store" });
+    const data = await res.json();
+    const rows = document.getElementById("rows");
+    rows.replaceChildren();
+    for (const a of data.alerts.slice().reverse()) {
+      const tr = document.createElement("tr");
+      tr.className = "alert";
+      cell(tr, new Date(a.ts * 1000).toLocaleTimeString());
+      cell(tr, a.type);
+      cell(tr, a.src || "-");
+      cell(tr, details(a));
+      rows.appendChild(tr);
+    }
+    document.getElementById("empty").hidden = data.alerts.length > 0;
+    document.getElementById("status").textContent =
+      "updated " + new Date().toLocaleTimeString() + " - " + data.alerts.length + " alerts";
+  } catch (e) {
+    document.getElementById("status").textContent =
+      "cannot read alerts.json (is the server running?)";
+  }
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
