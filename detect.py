@@ -1,4 +1,4 @@
-from collections import deque, defaultdict
+from collections import Counter, deque, defaultdict
 
 class ScanDetector:
     def __init__(self, max_ports=20, window=10):
@@ -94,4 +94,67 @@ class DistributedScanDetector:
                 return {"type": "DISTRIBUTED_SCAN", "dst": dst,
                         "sources": len(all_srcs), "ports": len(all_ports),
                         "window": window, "ts": now}
+        return None
+
+class FloodDetector:
+    def __init__(self, per_src_limit=100, global_limit=500, window=5):
+        self.per_src_limit = per_src_limit
+        self.global_limit = global_limit
+        self.window = window
+        self.pending = {}          # (src, sport, dst, dport) -> time of the SYN
+        self.order = deque()       # (time, key) in arrival order, for expiry
+        self.per_src = Counter()   # (src, dst, dport) -> half-open count
+        self.per_svc = Counter()   # (dst, dport)      -> half-open count
+        self.last_alert = {}
+
+    def _remove(self, key):
+        del self.pending[key]
+        src, sport, dst, dport = key
+        for counter, k in ((self.per_src, (src, dst, dport)),
+                           (self.per_svc, (dst, dport))):
+            counter[k] -= 1
+            if counter[k] == 0:
+                del counter[k]
+
+    def _alert(self, now, scope, key, alert):
+        if now - self.last_alert.get((scope, key), 0) > self.window:
+            self.last_alert[(scope, key)] = now
+            return alert
+        return None
+
+    def process(self, pkt):
+        if pkt["proto"] != "TCP":
+            return None
+        now = pkt["ts"]
+        flags = pkt["flags"]
+
+        while self.order and now - self.order[0][0] > self.window:
+            ts, key = self.order.popleft()
+            if self.pending.get(key) == ts:
+                self._remove(key)
+
+        key = (pkt["src"], pkt["sport"], pkt["dst"], pkt["dport"])
+
+        if (flags & 0x12) == 0x02:                      # SYN only
+            if key in self.pending:
+                return None
+            self.pending[key] = now
+            self.order.append((now, key))
+            src, sport, dst, dport = key
+            self.per_src[(src, dst, dport)] += 1
+            self.per_svc[(dst, dport)] += 1
+
+            n = self.per_src[(src, dst, dport)]
+            if n > self.per_src_limit:
+                return self._alert(now, "src", (src, dst, dport), {
+                    "type": "SYN_FLOOD", "src": src, "dst": dst, "dport": dport,
+                    "half_open": n, "window": self.window, "ts": now})
+            n = self.per_svc[(dst, dport)]
+            if n > self.global_limit:
+                return self._alert(now, "svc", (dst, dport), {
+                    "type": "SYN_FLOOD", "src": "many", "dst": dst, "dport": dport,
+                    "half_open": n, "window": self.window, "ts": now})
+        elif (flags & 0x10) and not (flags & 0x02):     # ACK completes the handshake
+            if key in self.pending:
+                self._remove(key)
         return None
