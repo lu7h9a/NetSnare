@@ -5,6 +5,23 @@ A packet sniffer and intrusion detector for Linux, built from scratch in Python 
 ![NetWraith dashboard showing 14 real SYN_FLOOD alerts from live testing](docs/dashboard-screenshot.jpg)
 *Real screenshot — the dashboard reading `alerts.json`, populated during live testing against this project's own sniffer.*
 
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [How it works](#how-it-works)
+  - [1. Packet capture](#1-packet-capture)
+  - [2. Header decoding, byte by byte](#2-header-decoding-byte-by-byte)
+  - [3. Detection algorithms](#3-detection-algorithms)
+  - [4. Alert pipeline](#4-alert-pipeline)
+- [Running it](#running-it)
+- [Why a SYN scan looks different from a SYN flood](#why-a-syn-scan-looks-different-from-a-syn-flood)
+- [Test results](#test-results)
+- [Ways to use this](#ways-to-use-this)
+- [Integrating it into your own app or site](#integrating-it-into-your-own-app-or-site)
+- [Known limitations](#known-limitations)
+- [Stack](#stack)
+
 ## What it does
 
 NetWraith opens a raw `AF_PACKET`/`SOCK_RAW` socket, decodes every header field by hand with `struct.unpack` (down to testing a single TCP flag bit with a bitmask), and runs four independent detectors over the live traffic:
@@ -42,20 +59,6 @@ Alerts are written atomically to `alerts.json` (temp file + `os.replace`, so rea
         ▼
  served by: python3 -m http.server
 ```
-
-## Table of contents
-
-- [How it works](#how-it-works)
-  - [1. Packet capture](#1-packet-capture)
-  - [2. Header decoding, byte by byte](#2-header-decoding-byte-by-byte)
-  - [3. Detection algorithms](#3-detection-algorithms)
-  - [4. Alert pipeline](#4-alert-pipeline)
-- [Running it](#running-it)
-- [Why a SYN scan looks different from a SYN flood](#why-a-syn-scan-looks-different-from-a-syn-flood)
-- [Test results](#test-results)
-- [Ways to use this](#ways-to-use-this)
-- [Integrating it into your own app or site](#integrating-it-into-your-own-app-or-site)
-- [Known limitations](#known-limitations)
 
 ## How it works
 
