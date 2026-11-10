@@ -45,12 +45,7 @@ def parse_packet(data):
         return None
     return pkt
 def write_state(alerts, stats):
-    tmp = ALERTS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({"alerts": alerts[-200:], "stats": stats}, f)
-    os.replace(tmp, ALERTS_FILE)
-def write_state(alerts, stats):
-    tmp = ALERTS_FILE + ".tmp"
+    tmp = f"{ALERTS_FILE}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump({"alerts": alerts[-200:], "stats": stats}, f)
     os.replace(tmp, ALERTS_FILE)
