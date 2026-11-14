@@ -21,6 +21,9 @@ A packet sniffer and intrusion detector for Linux, built from scratch in Python 
 - [Integrating it into your own app or site](#integrating-it-into-your-own-app-or-site)
 - [Known limitations](#known-limitations)
 - [Stack](#stack)
+- [Responsible use](#responsible-use)
+- [Contributing and security](#contributing-and-security)
+- [License](#license)
 
 ## What it does
 
@@ -317,3 +320,20 @@ sudo systemctl enable --now netwraith
 ## Stack
 
 Python 3 standard library only: `socket`, `struct`, `json`, `collections`, `time`. No external dependencies, no `pip install` required.
+
+## Responsible use
+
+NetWraith captures every packet on the interface it watches. Run it, and the
+attack tests in `tests/`, only on machines and networks you own or are
+explicitly authorised to monitor. Treat `packets.jsonl` and `alerts.json` as
+sensitive: they contain addresses and ports of real traffic.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the tests and send
+changes, and [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

@@ -1,0 +1,29 @@
+# Runs the unit tests on every push and pull request. The tests print PASS
+# or FAIL per check; this job fails on any FAIL, any crash, or fewer than the
+# expected 22 checks.
+name: tests
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          : > results.txt
+          for t in tests/test_*.py; do
+            echo "== $t"
+            python3 "$t" | tee -a results.txt
+          done
+          pass=$(grep -c "PASS" results.txt || true)
+          fail=$(grep -c "FAIL" results.txt || true)
+          echo "PASS: $pass  FAIL: $fail"
+          [ "$fail" -eq 0 ] && [ "$pass" -ge 22 ]
