@@ -37,5 +37,5 @@ print("50 clients, one port       :", "PASS" if n == 0 else "FAIL", n)
 d = DistributedScanDetector()
 for i in range(360):
     d.process(syn(6000 + i * 10, "10.0.3.%d" % (i % 200 + 1), "10.0.0.9", 1000 + i))
-kept = len(d.buckets["10.0.0.9"])
+kept = len(d.buckets["10.0.0.9"].srcs.buckets)
 print("buckets kept <= 5          :", "PASS" if kept <= 5 else "FAIL", kept)

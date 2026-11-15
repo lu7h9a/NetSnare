@@ -1,50 +1,52 @@
 #!/bin/bash
-# NetWraith one-command launcher.
+# NetSnare one-command launcher.
 #
-# Starts the HTTP server (for dashboard.html) in the background and the
-# sniffer in the foreground, so you see ALERT lines printed live in this
-# terminal. Everything stays in the terminal — no separate tabs needed.
+# Starts the dashboard server (serve.py) in the background and the sniffer
+# in the foreground, so you see ALERT lines printed live in this terminal.
+# Both drop root after start-up: they run as the user who called sudo, or
+# as nobody when run by root directly (for example from systemd).
 #
-# Usage: ./run.sh [port]        (default port 8000)
-#   Ctrl-C stops the sniffer AND the HTTP server together.
+# Usage: sudo ./run.sh [port]        (default port 8000)
+#   Ctrl-C stops the sniffer AND the dashboard server together.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 
 PORT="${1:-8000}"
+case "$PORT" in
+  ''|*[!0-9]*) echo "run.sh: port must be a number, got '$PORT'"; exit 1 ;;
+esac
+if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+  echo "run.sh: port must be from 1 to 65535"; exit 1
+fi
 
 if [ "$EUID" -ne 0 ]; then
-  echo "NetWraith needs root to open a raw socket for the sniffer."
+  echo "NetSnare needs root to open a raw socket for the sniffer."
   echo "Re-run as: sudo ./run.sh"
   exit 1
 fi
 
-# find the real (non-root) user, so the HTTP server + dashboard files
-# stay owned sanely and the URL printed below is accurate
-REAL_USER="${SUDO_USER:-$(whoami)}"
-
-echo "=== NetWraith ==="
+echo "=== NetSnare ==="
 echo "Dashboard: http://127.0.0.1:${PORT}/dashboard.html"
-echo "Starting HTTP server (background) and sniffer (foreground, Ctrl-C stops both)..."
+echo "Starting the dashboard server (background) and sniffer (foreground, Ctrl-C stops both)..."
 echo
 
-# Start the dashboard's HTTP server in the background, as the invoking
-# user if possible (not root), bound to localhost only.
-if [ -n "${SUDO_USER:-}" ]; then
-  sudo -u "$SUDO_USER" python3 -m http.server --bind 127.0.0.1 "$PORT" \
-    > /tmp/netwraith_http.log 2>&1 &
-else
-  python3 -m http.server --bind 127.0.0.1 "$PORT" \
-    > /tmp/netwraith_http.log 2>&1 &
-fi
+# The server's output stays in this terminal; no log file in a shared /tmp.
+python3 serve.py "$PORT" &
 HTTP_PID=$!
 
 cleanup() {
   echo
-  echo "Stopping HTTP server (pid $HTTP_PID)..."
+  echo "Stopping the dashboard server (pid $HTTP_PID)..."
   kill "$HTTP_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
+
+sleep 0.5
+if ! kill -0 "$HTTP_PID" 2>/dev/null; then
+  echo "run.sh: the dashboard server did not start (port ${PORT} in use?)"
+  exit 1
+fi
 
 # Sniffer runs in the foreground: its print() ALERT lines show here directly.
 python3 sniffer.py

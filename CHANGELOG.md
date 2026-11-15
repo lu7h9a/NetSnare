@@ -1,14 +1,36 @@
 # Changelog
 
-All notable changes to NetWraith are documented here. The format follows
+All notable changes to NetSnare are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Renamed from NetWraith to NetSnare.
+- The dashboard is served by `serve.py` instead of `python3 -m http.server`:
+  it serves only `dashboard.html` and `alerts.json`, refuses foreign `Host`
+  headers (DNS rebinding) and never runs as root.
+- Outputs moved: `www/alerts.json`, and `logs/packets.jsonl` (owner-only,
+  rotated at 100 MB).
+- The sniffer and the dashboard server drop root after start-up.
+
+### Fixed
+- Scan detectors now do constant work per packet; before, a flood made each
+  packet slower than the last.
+- Memory is bounded under spoofed traffic: every detector caps and sweeps
+  its keys, and the alert list keeps the last 200.
+- IP fragments, IHL below 5, non-IPv4 and short TCP headers are no longer
+  decoded as TCP (forged SYNs, hidden scans).
+- A bogus ACK after each SYN no longer hides a SYN flood; a spoofed flood
+  spread over random ports now trips a per-host limit.
+- On loopback each packet is counted once, not twice.
+- A full disk no longer stops the sniffer.
+
 ### Added
 - `LICENSE` (MIT), `SECURITY.md`, `CONTRIBUTING.md`, this changelog, and CI
   that runs the unit tests on every push.
+- `tests/test_hardening.py` (20 checks).
 
 ## [0.1.0] - 2026-11-11
 
@@ -34,5 +56,5 @@ First working version.
 - `write_state`: removed a duplicate function, and the temp file name now
   includes the process id.
 
-[Unreleased]: https://github.com/lu7h9a/netwraith/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/lu7h9a/netwraith/commits/main
+[Unreleased]: https://github.com/lu7h9a/netsnaire/commits/main
+[0.1.0]: https://github.com/lu7h9a/netsnaire/commit/0800475

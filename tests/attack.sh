@@ -1,5 +1,5 @@
 #!/bin/bash
-# NetWraith attack harness — runs ONE bounded SYN flood trial against 127.0.0.1
+# NetSnare attack harness — runs ONE bounded SYN flood trial against 127.0.0.1
 # and reports real packets-on-wire vs. what the sniffer caught.
 # Usage: ./tests/attack.sh <trial-number> [port] [data-size]
 
@@ -31,10 +31,10 @@ sent=$(grep -oP '^\d+(?= packets transmitted)' "$LOGFILE" || echo "?")
 echo "hping3 reported sent: $sent"
 
 echo "--- current sniffer alert count (requires sniffer.py already running) ---"
-if [ -f alerts.json ]; then
-  python3 -c "import json; d=json.load(open('alerts.json')); print('alerts so far:', len(d['alerts'])); print('stats:', d['stats'])"
+if [ -f www/alerts.json ]; then
+  python3 -c "import json; d=json.load(open('www/alerts.json')); print('alerts so far:', len(d['alerts'])); print('stats:', d['stats'])"
 else
-  echo "alerts.json not found — is sniffer.py running?"
+  echo "www/alerts.json not found — is sniffer.py running?"
 fi
 
 echo "=== Trial $TRIAL done ==="

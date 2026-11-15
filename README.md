@@ -1,9 +1,9 @@
-# NetWraith
+# NetSnare
 
 A packet sniffer and intrusion detector for Linux, built from scratch in Python 3 with **no frameworks** — no Scapy, no Flask, no third-party dependencies. Raw sockets, hand-decoded Ethernet/IPv4/TCP/UDP headers, and four independent detection algorithms for port scans and SYN floods.
 
-![NetWraith dashboard showing 14 real SYN_FLOOD alerts from live testing](docs/dashboard-screenshot.jpg)
-*Real screenshot — the dashboard reading `alerts.json`, populated during live testing against this project's own sniffer.*
+![NetSnare dashboard showing 14 real SYN_FLOOD alerts from live testing](docs/dashboard-screenshot.jpg)
+*Real screenshot — the dashboard reading `alerts.json`, populated during live testing against this project's own sniffer. The screenshots in this README were taken before the project was renamed from NetWraith, so they show the old name.*
 
 ## Table of contents
 
@@ -27,14 +27,14 @@ A packet sniffer and intrusion detector for Linux, built from scratch in Python 
 
 ## What it does
 
-NetWraith opens a raw `AF_PACKET`/`SOCK_RAW` socket, decodes every header field by hand with `struct.unpack` (down to testing a single TCP flag bit with a bitmask), and runs four independent detectors over the live traffic:
+NetSnare opens a raw `AF_PACKET`/`SOCK_RAW` socket, decodes every header field by hand with `struct.unpack` (down to testing a single TCP flag bit with a bitmask), and runs four independent detectors over the live traffic:
 
 - **Fast port-scan detector** — sliding 10-second window, alerts past 20 distinct destination ports from one source.
 - **Slow port-scan detector** — 1-minute buckets over a 10-minute window, catches a patient attacker who stays under the fast detector's radar.
 - **Distributed port-scan detector** — groups by *target* instead of *attacker*; alerts when ≥5 distinct sources collectively touch >30 ports on one victim within 5 minutes, catching a coordinated multi-IP sweep that no single source would trigger alone.
-- **SYN-flood detector** — tracks unanswered SYNs keyed per-service and globally, so it catches both a flood from one real IP and a spoofed flood spread across thousands of fake source addresses.
+- **SYN-flood detector** — tracks unanswered SYNs per source, per service and per host, so it catches both a flood from one real IP and a spoofed flood spread across thousands of fake source addresses or ports.
 
-Alerts are written atomically to `alerts.json` (temp file + `os.replace`, so readers never see a half-written file), and `dashboard.html` polls that file every 2 seconds to show a live table in light or dark theme.
+Alerts are written atomically to `www/alerts.json` (temp file + `os.replace`, so readers never see a half-written file), and `dashboard.html` polls that file every 2 seconds to show a live table in light or dark theme.
 
 ## Architecture
 
@@ -47,20 +47,20 @@ Alerts are written atomically to `alerts.json` (temp file + `os.replace`, so rea
         ▼
  parse_packet()  ──  Ethernet → IPv4 → TCP/UDP, by hand
         │
-        ├──────────────▶ packets.jsonl   (one JSON line per packet)
+        ├──────────────▶ logs/packets.jsonl   (one JSON line per packet, owner-only, rotated at 100 MB)
         │
         ▼
  4 detectors get every packet:
    ScanDetector · SlowScanDetector · DistributedScanDetector · FloodDetector
         │
         ▼
- alerts.json  ──  atomic write (tmp file + os.replace)
+ www/alerts.json  ──  atomic write (tmp file + os.replace)
         │
         ▼
  dashboard.html  ──  fetch() every 2s, renders table, light/dark theme
         │
         ▼
- served by: python3 -m http.server
+ served by: serve.py (127.0.0.1 only; serves dashboard.html and alerts.json, nothing else)
 ```
 
 ## How it works
@@ -111,25 +111,25 @@ offset  bytes                                   meaning
 
 `14 (Ethernet) + 20 (IPv4, IHL×4) + 40 (TCP incl. options) = 74 bytes`, matching the frame's actual length exactly. The decoding logic in `parse_packet()`:
 
-1. Slice off the first 14 bytes, unpack with `"!6s6sH"` (destination MAC, source MAC, EtherType). Stop here if EtherType isn't `0x0800` (IPv4) — this sniffer does not decode IPv6 or ARP.
-2. Unpack the next 20 bytes with `"!BBHHHBBH4s4s"` to get version/IHL, TTL, protocol, and the source/destination IP. `IHL` is in 4-byte words, so the real header length is `IHL × 4` — options can make this larger than 20, so the TCP/UDP offset is always computed, never assumed fixed.
+1. Read the EtherType at bytes 12-13 with `"!H"`. Stop here if it isn't `0x0800` (IPv4) — this sniffer does not decode IPv6, ARP or VLAN-tagged (`0x8100`) frames.
+2. Unpack the next 20 bytes with `"!BBHHHBBH4s4s"` to get version/IHL, TTL, protocol, and the source/destination IP. `IHL` is in 4-byte words, so the real header length is `IHL × 4` — options can make this larger than 20, so the TCP/UDP offset is always computed, never assumed fixed. Packets that are not version 4, have an IHL below 5, or a TCP data offset below 5 are dropped. IP fragments are counted as `FRAG` and never decoded as TCP: a non-first fragment carries payload, not a TCP header, and reading it as one would let anyone forge flags and ports.
 3. If `protocol == 6` (TCP), unpack 20 more bytes with `"!HHIIBBHHH"` for ports, sequence/ack numbers, and the flags byte. If `protocol == 17` (UDP), unpack 8 bytes with `"!HHHH"` instead.
 4. TCP flags are tested with bitmasks against the single flags byte: `FIN=0x01, SYN=0x02, RST=0x04, PSH=0x08, ACK=0x10`. A "SYN-only" packet (not a SYN-ACK) is `(flags & 0x12) == 0x02` — masking down to just the SYN/ACK bits and requiring exactly SYN set.
-5. The result is a plain dict (`ts`, `src`, `dst`, `proto`, and for TCP also `sport`, `dport`, `seq`, `ack`, `flags`), written to `packets.jsonl` and handed to every detector.
+5. The result is a plain dict (`ts`, `src`, `dst`, `proto`, and for TCP also `sport`, `dport`, `seq`, `ack`, `flags`), written to `logs/packets.jsonl` and handed to every detector.
 
 All multi-byte fields are read in **network byte order** (big-endian, the `!` prefix in every format string) — every protocol header on the wire is big-endian regardless of the host CPU's own byte order.
 
 ### 3. Detection algorithms
 
-**`ScanDetector` (fast port scan).** For each source IP, a `deque` holds `(timestamp, destination_port)` for every SYN-only packet seen. On each new SYN, entries older than the window (default 10s) are popped from the front (`popleft()`, O(1)), then the *distinct* destination ports remaining are counted as a `set`. An alert fires once that count exceeds the threshold (default 20) — with a cool-down so a continuing scan doesn't re-alert on every subsequent packet.
+**`ScanDetector` (fast port scan).** For each source IP, a `deque` holds `(timestamp, destination_port)` for every SYN-only packet seen. On each new SYN, entries older than the window (default 10s) are popped from the front (`popleft()`, O(1)), while a `Counter` of ports is kept in step, so the number of *distinct* destination ports is read in O(1) — the work per packet does not grow with the backlog, even under a flood. An alert fires once that count exceeds the threshold (default 20) — with a cool-down so a continuing scan doesn't re-alert on every subsequent packet.
 
-**`SlowScanDetector` (patient port scan).** Storing every packet for a 10-minute window would use unbounded memory, so time is instead divided into fixed buckets (default 60s). Each bucket holds a `set` of ports touched by one source during that minute; buckets older than the window (default 10 buckets = 10 minutes) are dropped. The distinct-port count is the union of all surviving buckets' sets — memory per source is capped at a fixed number of small sets, regardless of how much traffic arrives.
+**`SlowScanDetector` (patient port scan).** Storing every packet for a 10-minute window would use unbounded memory, so time is instead divided into fixed buckets (default 60s). Each bucket holds a `set` of ports touched by one source during that minute; buckets older than the window (default 10 buckets = 10 minutes) are dropped. A `Counter` records how many surviving buckets hold each port, so the distinct-port count is read without re-unioning the sets — memory per source is capped at a fixed number of small sets, regardless of how much traffic arrives.
 
 **`DistributedScanDetector` (multi-source scan).** Same bucket mechanism, but keyed by *destination* instead of *source*, and each bucket tracks two sets: distinct source IPs seen, and distinct ports touched. An alert requires **both** conditions — at least 5 distinct sources **and** more than 30 distinct ports against one target within the window — so neither "one attacker scanning many ports" (caught by the detectors above instead) nor "many clients hitting one popular port" (a busy server, not an attack) can trigger it alone.
 
-**`FloodDetector` (SYN flood, single-source and spoofed).** Every SYN-only packet is recorded in a `pending` dict keyed by the 4-tuple `(source IP, source port, destination IP, destination port)`, with the arrival time as the value; a parallel `deque` tracks arrival order so entries older than the window (default 5s) can be expired in O(1). `Counter`s track how many pending entries exist per `(source, destination, port)` and per `(destination, port)` globally. A matching **ACK** (not RST — see Known limitations) on the same 4-tuple removes the entry from all three structures. An alert fires when either counter exceeds its threshold: >100 unanswered SYNs from one source to one service (catches a real single-IP flood), or >500 total from all sources combined (catches a flood spread across spoofed source addresses, where no single fake IP ever looks suspicious alone).
+**`FloodDetector` (SYN flood, single-source and spoofed).** Every SYN-only packet is recorded in a `pending` dict keyed by the 4-tuple `(source IP, source port, destination IP, destination port)`, with the arrival time and the SYN's sequence number as the value; the dict keeps arrival order, so entries older than the window (default 5s) are expired from the front in O(1). `Counter`s track how many pending entries exist per `(source, destination, port)`, per `(destination, port)` and per destination. Only the handshake's real final **ACK** — same 4-tuple, sequence number = SYN's + 1 (not RST — see Known limitations) — removes the entry; a bogus ACK sent after each SYN does not. An alert fires when a counter exceeds its threshold: >100 unanswered SYNs from one source to one service (a real single-IP flood), >500 from all sources to one service (a flood from spoofed source addresses, where no single fake IP looks suspicious alone), or >1000 from all sources to one host on any ports (a spoofed flood that also randomises the destination port).
 
-Because a scan and a flood measure fundamentally different things — distinct ports touched vs. repeated unanswered attempts to one port — the same traffic can never trigger both detectors at once (see the table below).
+A scan and a flood measure different things — distinct ports touched vs. repeated unanswered attempts — so ordinary scans and floods trigger only their own detector (see the table below). Traffic that does both, such as a flood hitting more than 20 ports, rightly triggers both.
 
 ### 4. Alert pipeline
 
@@ -138,7 +138,7 @@ Every packet is handed to all four detectors in turn. Any non-`None` return valu
 ```python
 tmp = f"{ALERTS_FILE}.{os.getpid()}.tmp"
 with open(tmp, "w") as f:
-    json.dump({"alerts": alerts[-200:], "stats": stats}, f)
+    json.dump({"alerts": list(alerts), "stats": stats}, f)   # last 200, a bounded deque
 os.replace(tmp, ALERTS_FILE)
 ```
 
@@ -152,7 +152,7 @@ Writing to a process-specific temp file and then calling `os.replace()` makes th
 sudo ./run.sh
 ```
 
-Starts the dashboard's HTTP server in the background and the sniffer in the foreground — `ALERT` lines print straight to your terminal, and the dashboard is immediately at **http://127.0.0.1:8000/dashboard.html**. Ctrl-C stops both together. Pass a different port with `sudo ./run.sh 8080`.
+Starts the dashboard server (`serve.py`) in the background and the sniffer in the foreground — `ALERT` lines print straight to your terminal, and the dashboard is immediately at **http://127.0.0.1:8000/dashboard.html**. Ctrl-C stops both together. Pass a different port with `sudo ./run.sh 8080`. Both programs give up root right after start-up: they continue as the user who ran `sudo`, or as `nobody` when started by root directly.
 
 ### Manual (two terminals)
 
@@ -161,7 +161,7 @@ Starts the dashboard's HTTP server in the background and the sniffer in the fore
 sudo python3 sniffer.py
 
 # terminal 2
-python3 -m http.server --bind 127.0.0.1 8000
+python3 serve.py 8000
 # open http://127.0.0.1:8000/dashboard.html
 ```
 
@@ -175,7 +175,7 @@ Detection thresholds are constructor defaults in `detect.py` (e.g. `ScanDetector
 | Destination ports | Many different ports, usually 1 SYN each | Usually one port, hit repeatedly |
 | What the detector counts | Size of the *set* of distinct ports per source | The *count* of unanswered SYNs per (source, target, port) |
 
-A scan spreads one SYN across many ports, so the per-service SYN count never approaches the flood threshold. A flood repeats one port, so the distinct-port count never approaches the scan threshold — the same traffic can never trigger both.
+A scan spreads one SYN across many ports, so the per-service SYN count never approaches the flood threshold. A flood repeats one port, so the distinct-port count never approaches the scan threshold — so a plain scan or a plain flood triggers only its own detector.
 
 ## Test results
 
@@ -187,8 +187,9 @@ A scan spreads one SYN across many ports, so the per-service SYN count never app
 | `tests/test_slow.py` | slow scan caught where fast misses it / 20-min trickle (honest miss) / bucket memory bound | 5/5 pass |
 | `tests/test_distributed.py` | multi-source scan caught only by the distributed detector / false-positive checks / bucket memory bound | 6/6 pass |
 | `tests/test_flood.py` | single-source flood / spoofed flood / clean handshakes / scan≠flood / memory bound | 7/7 pass |
+| `tests/test_hardening.py` | constant work per packet under a 100k-SYN flood / key caps / sweep / bogus-ACK evasion / random-port flood / strict IPv4 decoding and fragments / dashboard server refuses other files and foreign Host headers | 20/20 pass |
 
-![22/22 unit tests passing across all 4 detectors](docs/screenshots/01-unit-tests.jpg)
+![The original 22 unit tests passing (taken before test_hardening.py was added)](docs/screenshots/01-unit-tests.jpg)
 
 **Live attack testing**, against this project's own target:
 
@@ -209,13 +210,13 @@ Both the fast and slow scan detectors fired correctly (at port #21 and #31 respe
 | 4 | 80 | 500 B | 1,154,715 | 10 → 12 | ✅ |
 | 5 | 443 | 0 B | 1,217,648 | 12 → 14 | ✅ |
 
-**Result: 5/5 floods caught, 0 false alarms, 0 missed.**
+**Result: 5/5 floods caught, 0 false alarms, 0 missed.** The alert counter is cumulative: it also counts alerts from runs between the trials (4 between trials 1 and 2), which the table does not list. These trials ran before the hardening described above.
 
 ![one of the 5 real hping3 flood trials](docs/screenshots/03-flood-trial.jpg)
 
-A genuine finding from this testing: the single-threaded Python capture loop only logged a small fraction of the ~1.2 million SYNs sent per trial — yet every flood was still caught, because the detector only needs to see a small fraction of SYNs to cross its threshold. That's a useful robustness property of threshold-based detection, not a flaw masked by luck.
+A finding from this testing: the capture loop logged only a small fraction of the ~1.2 million SYNs sent per trial. Part of the cause was that the old scan detectors did more work per packet as their backlog grew; that is fixed (constant work per packet, tested). Python is still far slower than the kernel can deliver packets, so under a real flood most packets are not seen. Floods were still caught because the detector needs only a fraction of the SYNs to cross its threshold — but do not read the packet log as a complete record.
 
-![run.sh's root guard, and the real push to GitHub](docs/screenshots/04-run-and-push.jpg)
+![run.sh's root guard, and the push to GitHub (old name and repository URL)](docs/screenshots/04-run-and-push.jpg)
 
 ## Ways to use this
 
@@ -227,29 +228,26 @@ A genuine finding from this testing: the single-threaded Python capture loop onl
 
 ## Integrating it into your own app or site
 
-### 1. Read `alerts.json` from any language
+### 1. Read `www/alerts.json` from any language
 
 ```python
 import json
-with open("alerts.json") as f:
+with open("www/alerts.json") as f:
     data = json.load(f)
 print(data["alerts"])   # list of alert dicts
 print(data["stats"])    # {"TCP": N, "UDP": N}
 ```
 
-```js
-const res = await fetch("http://your-host:8000/alerts.json", {cache: "no-store"});
-const data = await res.json();
-```
+From a web page, fetch it same-origin (a page served by `serve.py`, or behind the same reverse proxy): `serve.py` sends no CORS headers on purpose, so other sites cannot read your alerts.
 
 ### 2. Embed the live dashboard in another site
 
 ```html
-<iframe src="http://your-netwraith-host:8000/dashboard.html"
+<iframe src="http://your-netsnare-host:8000/dashboard.html"
         style="width:100%; height:500px; border:0;"></iframe>
 ```
 
-(Serve over HTTPS and restrict access with a reverse proxy if reachable beyond your own LAN — `run.sh` binds to `127.0.0.1` only by default for exactly this reason.)
+(`serve.py` binds to `127.0.0.1` and answers only requests whose `Host` is `127.0.0.1:<port>` or `localhost:<port>`, which blocks DNS-rebinding attacks. To reach it from elsewhere, put an HTTPS reverse proxy with access control in front and have it send `Host: 127.0.0.1:8000`.)
 
 ### 3. Forward alerts to Slack, a webhook, or a SIEM
 
@@ -258,7 +256,7 @@ import json, time, urllib.request
 
 seen = set()
 while True:
-    data = json.load(open("alerts.json"))
+    data = json.load(open("www/alerts.json"))
     for a in data["alerts"]:
         key = (a["type"], a["ts"])
         if key not in seen:
@@ -289,14 +287,14 @@ for pkt in your_own_packet_source():
 ### 5. Run it as an always-on system service
 
 ```ini
-# /etc/systemd/system/netwraith.service
+# /etc/systemd/system/netsnare.service
 [Unit]
-Description=NetWraith packet sniffer and dashboard
+Description=NetSnare packet sniffer and dashboard
 After=network.target
 
 [Service]
-WorkingDirectory=/opt/netwraith
-ExecStart=/opt/netwraith/run.sh 8000
+WorkingDirectory=/opt/netsnare
+ExecStart=/opt/netsnare/run.sh 8000
 Restart=on-failure
 
 [Install]
@@ -304,7 +302,7 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now netwraith
+sudo systemctl enable --now netsnare
 ```
 
 ## Known limitations
@@ -315,17 +313,21 @@ sudo systemctl enable --now netwraith
 - **The fast and slow scan detectors can both fire on the same scan**, producing two alerts for one real attack. Not currently de-duplicated.
 - **Tested against loopback (`127.0.0.1`)**, not a separate victim host, so results reflect a single-machine lab rather than a real two-host network path.
 - **RST is deliberately ignored** by the flood detector (only a matching ACK clears a pending SYN) — a trade-off that counts connection *attempts* rather than true server-side half-open state, chosen so the detector's own test traffic doesn't erase itself when the attacking machine's kernel replies RST to unsolicited SYN-ACKs.
+- **Fragmented scans (`nmap -f`) are not detected.** IP fragments are counted (`FRAG` in the stats) but not reassembled, so a scan split into fragments shows up only as a rising fragment count.
+- **VLAN-tagged frames are dropped** (EtherType `0x8100`), so traffic on a trunk port is not decoded.
+- **Source addresses can be spoofed.** A `PORT_SCAN` alert names the source the packets claim; an attacker can make it name any IP.
+- **Tracked state is capped** at 50,000 keys per detector (sources, destinations or half-open connections). An attacker who sends from more spoofed addresses than that pushes out the oldest entries, which can hide a slow scan running at the same time.
 - **ARP spoofing detection and PCAP replay** are not implemented.
 
 ## Stack
 
-Python 3 standard library only: `socket`, `struct`, `json`, `collections`, `time`. No external dependencies, no `pip install` required.
+Python 3 standard library only: `socket`, `struct`, `json`, `collections`, `time`, `os`, `pwd`, `http.server`. No external dependencies, no `pip install` required.
 
 ## Responsible use
 
-NetWraith captures every packet on the interface it watches. Run it, and the
+NetSnare captures every packet on the interface it watches. Run it, and the
 attack tests in `tests/`, only on machines and networks you own or are
-explicitly authorised to monitor. Treat `packets.jsonl` and `alerts.json` as
+explicitly authorised to monitor. Treat `logs/packets.jsonl` and `www/alerts.json` as
 sensitive: they contain addresses and ports of real traffic.
 
 ## Contributing and security

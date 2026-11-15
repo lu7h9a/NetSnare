@@ -33,5 +33,5 @@ print("one port repeated     :", "PASS" if n == 0 else "FAIL", n)
 d = SlowScanDetector()
 for i in range(360):
     d.process(syn(6000 + i * 10, "10.0.0.5", 1000 + i))
-kept = len(d.buckets["10.0.0.5"])
+kept = len(d.buckets["10.0.0.5"].buckets)
 print("buckets kept <= 10    :", "PASS" if kept <= 10 else "FAIL", kept)

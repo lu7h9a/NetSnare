@@ -1,14 +1,15 @@
 # Contributing
 
-Thanks for your interest in improving NetWraith.
+Thanks for your interest in improving NetSnare.
 
 ## Ground rules
 
-- **Standard library only.** NetWraith deliberately has no third-party
+- **Standard library only.** NetSnare deliberately has no third-party
   dependencies: no Scapy, no Flask, no `pip install`. Please keep it that way.
 - **Python 3**, Linux (raw `AF_PACKET` sockets).
-- Keep detectors independent and their memory bounded. Each detector has a
-  test that proves its memory stays capped.
+- Keep detectors independent, their memory bounded and their work per packet
+  constant. `tests/test_hardening.py` checks the key caps, the sweep and the
+  time per packet; extend it when you add a detector.
 
 ## Running the tests
 
@@ -19,7 +20,7 @@ nor a network:
 for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-Every line must say `PASS`; there are 22 checks. CI runs the same tests on
+Every line must say `PASS`; there are 42 checks. CI runs the same tests on
 every push and pull request and fails on any `FAIL`.
 
 `tests/attack.sh` drives live attacks (nmap, hping3) against your own

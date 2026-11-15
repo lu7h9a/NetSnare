@@ -26,4 +26,4 @@ jobs:
           pass=$(grep -c "PASS" results.txt || true)
           fail=$(grep -c "FAIL" results.txt || true)
           echo "PASS: $pass  FAIL: $fail"
-          [ "$fail" -eq 0 ] && [ "$pass" -ge 22 ]
+          [ "$fail" -eq 0 ] && [ "$pass" -ge 42 ]

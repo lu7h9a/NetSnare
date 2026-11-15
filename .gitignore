@@ -1,6 +1,10 @@
-alerts.json
 docs/BUILD-GUIDE.html
+alerts.json
+alerts.json.*.tmp
 packets.jsonl
+packets.jsonl.1
+www/
+logs/
 *.pcap
 __pycache__/
 *.swp

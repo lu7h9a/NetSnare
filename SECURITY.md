@@ -20,20 +20,21 @@ otherwise. There is no bug bounty.
   memory, or causes a wrong decode that hides an attack.
 - Content from captured traffic reaching the dashboard in a way that runs
   script in the viewer's browser.
-- Anything that lets a remote party read `alerts.json`, `packets.jsonl` or
-  other files through the dashboard server when it is bound to `127.0.0.1`
-  as documented.
+- Anything that lets a remote party, or a web page you visit, read
+  `logs/packets.jsonl` or any file other than `dashboard.html` and
+  `www/alerts.json` through `serve.py`, or read those two from another
+  origin.
 
 ## Out of scope
 
 - Evasion already listed under **Known limitations** in the README (for
   example FIN/NULL/Xmas or UDP scans, IPv6, very slow scans).
-- Exposing the dashboard server on a public interface yourself: it is a plain
-  `python3 -m http.server` meant for local use.
+- Exposing the dashboard server on a public interface yourself, or putting
+  a proxy in front of it without access control.
 
 ## Responsible use
 
-NetWraith captures every packet on the interface it watches, and
-`packets.jsonl` stores the decoded headers. Run it only on machines and
+NetSnare captures every packet on the interface it watches, and
+`logs/packets.jsonl` stores the decoded headers. Run it only on machines and
 networks you own or are explicitly authorised to monitor, and treat its
 output files as sensitive.
